@@ -400,15 +400,15 @@ const rects = await element.getClientRects();
 
 #### Event Listeners
 
-Event listeners have security restrictions and return unique IDs:
+Listeners attach to `document` and return unique IDs for removal.
 
 ```javascript
 // Add event listener - returns ID for later removal
 const listenerId = await element.addEventListener('click', async (event) => {
   console.log('Element clicked!');
-
   // Do something with the event
-  const target = event.target;
+  // getTarget() returns a SafeElement
+  const target = await event.getTarget();
 }, { capture: false });
 
 // Remove event listener using the ID

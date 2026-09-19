@@ -807,7 +807,8 @@ interface SafeElement {
      * Allowed events (with random delay for anti-fingerprinting):
      * - Keyboard: keydown, keyup, keypress
      *
-     * listener function receives trimmed event object with common properties only.
+     * Document-level listener with trimmed event properties and getTarget().
+     * getTarget() returns a SafeElement, or null for unsupported or blocked targets.
      * 
      * @example
      * ```typescript
@@ -821,7 +822,7 @@ interface SafeElement {
      */
     addEventListener(
         type: string,
-        listener: (event: any) => void,
+        listener: (event: { [key: string]: any; getTarget(): Promise<SafeElement | null> }) => void,
         options?: boolean | AddEventListenerOptions
     ): Promise<string>;
 

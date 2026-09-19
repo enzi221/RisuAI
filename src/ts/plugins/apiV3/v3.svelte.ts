@@ -312,9 +312,21 @@ class SafeElement {
 
         }
 
+        const safeTarget = (event: Event): SafeElement | null => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement) || target.getAttribute('freezed')) {
+                return null;
+            }
+            return new SafeElement(target);
+        };
+
         if(allowedDocumentEventListeners.includes(type)){
             const modifiedListener = (event: any) => {
-                listener(trimEvent(event))
+                listener({
+                    __type: 'SAFE_EVENT',
+                    data: trimEvent(event),
+                    target: safeTarget(event),
+                })
             }
             this.#eventIdMap.set(id, modifiedListener)
             documentEventListeners.push({type, listener: modifiedListener as EventListenerOrEventListenerObject, options: realOptions})
@@ -328,7 +340,11 @@ class SafeElement {
                     delay = (crypto.getRandomValues(new Uint32Array(1))[0] / 100) % 100; //0-99 ms              
                 } catch (error) {}
                 setTimeout(() => {
-                    listener(trimEvent(event));
+                    listener({
+                        __type: 'SAFE_EVENT',
+                        data: trimEvent(event),
+                        target: safeTarget(event),
+                    });
                 }, delay);
             }
             this.#eventIdMap.set(id, modifiedListener)

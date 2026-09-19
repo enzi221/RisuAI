@@ -82,6 +82,13 @@ await (async function() {
     }
 
     function deserializeResult(val) {
+        if (val && typeof val === 'object' && val.__type === 'SAFE_EVENT') {
+            const target = deserializeResult(val.target);
+            return {
+                ...val.data,
+                getTarget: async () => target,
+            };
+        }
         if (val && typeof val === 'object' && val.__type === 'REMOTE_REF') {
             const proxy = new Proxy({}, {
                 get: (target, prop) => {
@@ -333,7 +340,7 @@ await (async function() {
                         if (a.aborted) { controller.abort(); }
                         return controller.signal;
                     }
-                    return a;
+                    return deserializeResult(a);
                 });
                 const result = await fn(...deserializedArgs);
                 response.result = result;
@@ -557,6 +564,7 @@ export class SandboxHost {
                 if (cached) return cached;
 
                 const wrapper = async (...innerArgs: any[]) => {
+                    const callbackInstanceIds: string[] = [];
                     return new Promise((resolve, reject) => {
                         const reqId = 'cb_req_' + Math.random().toString(36).substring(2);
                         this.pendingCallbacks.set(reqId, { resolve, reject });
@@ -584,7 +592,22 @@ export class SandboxHost {
                                 }
                                 return ref;
                             }
-                            return arg;
+                            if (arg?.__type === 'SAFE_EVENT') {
+                                const target = this.serialize(arg.target);
+                                if (target?.__type === 'REMOTE_REF') {
+                                    callbackInstanceIds.push(target.id);
+                                }
+                                return {
+                                    __type: 'SAFE_EVENT',
+                                    data: arg.data,
+                                    target,
+                                };
+                            }
+                            const serialized = this.serialize(arg);
+                            if (serialized?.__type === 'REMOTE_REF') {
+                                callbackInstanceIds.push(serialized.id);
+                            }
+                            return serialized;
                         });
 
                         const message = {
@@ -595,6 +618,10 @@ export class SandboxHost {
                         };
                         const transferables = this.collectTransferables(message);
                         this.iframe.contentWindow?.postMessage(message, '*', transferables);
+                    }).finally(() => {
+                        for (const id of callbackInstanceIds) {
+                            this.instanceRegistry.delete(id);
+                        }
                     });
                 };
                 this.callbackWrapperCache.set(cbRef.id, wrapper);
