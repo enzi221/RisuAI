@@ -17,6 +17,12 @@ export type BrowserStorageUsageEntry = {
     category: BrowserStorageCategory
 }
 
+export type BrowserStorageUsage = {
+    entries: BrowserStorageUsageEntry[]
+    /** Whether any storage failed during measurement */
+    incomplete: boolean
+}
+
 const indexedDBCategories: Record<string, BrowserStorageCategory> = {
     'firefox-translations-models': 'translationCache',
     'hypaVector': 'hypaVector',
@@ -155,10 +161,10 @@ function openExistingIndexedDB(name: string): Promise<IDBDatabase | null> {
     })
 }
 
-async function measureIndexedDB(name: string, add: (category: BrowserStorageCategory, bytes: number) => void) {
+async function measureIndexedDB(name: string, add: (category: BrowserStorageCategory, bytes: number) => void): Promise<boolean> {
     const db = await openExistingIndexedDB(name)
     if (!db) {
-        return
+        return true
     }
 
     const category = categorizeIndexedDB(name)
@@ -175,8 +181,10 @@ async function measureIndexedDB(name: string, add: (category: BrowserStorageCate
                 add(categorizeIndexedDBEntry(name, category, key), estimateValueSize(key) + estimateValueSize(value))
             }
         }
+        return true
     } catch (error) {
         console.error(`Failed to measure IndexedDB ${name}`, error)
+        return false
     } finally {
         db.close()
     }
@@ -213,9 +221,9 @@ function categorizeOPFSFile(name: string): BrowserStorageCategory {
     return mainStorageOPFSNameCategories.find(([prefix]) => name.startsWith(prefix))?.[1] ?? 'mainDatabase'
 }
 
-async function measureOPFS(add: (category: BrowserStorageCategory, bytes: number) => void) {
+async function measureOPFS(add: (category: BrowserStorageCategory, bytes: number) => void): Promise<boolean> {
     if (!navigator.storage?.getDirectory) {
-        return
+        return true
     }
     try {
         const root = await navigator.storage.getDirectory()
@@ -227,14 +235,16 @@ async function measureOPFS(add: (category: BrowserStorageCategory, bytes: number
                 add('other', await measureOPFSDirectory(entry as FileSystemDirectoryHandle))
             }
         }
+        return true
     } catch (error) {
         console.error('Failed to measure OPFS', error)
+        return false
     }
 }
 
-async function measureCacheStorage(add: (category: BrowserStorageCategory, bytes: number) => void) {
+async function measureCacheStorage(add: (category: BrowserStorageCategory, bytes: number) => void): Promise<boolean> {
     if (typeof caches === 'undefined') {
-        return
+        return true
     }
     try {
         for (const name of await caches.keys()) {
@@ -247,29 +257,39 @@ async function measureCacheStorage(add: (category: BrowserStorageCategory, bytes
                 }
             }
         }
+        return true
     } catch (error) {
         console.error('Failed to measure Cache Storage', error)
+        return false
     }
 }
 
 /**
  * Measures IndexedDB, OPFS and Cache Storage of this origin by reading every stored value, sorted by size in descending order.
  */
-export async function measureBrowserStorage(): Promise<BrowserStorageUsageEntry[]> {
+export async function measureBrowserStorage(): Promise<BrowserStorageUsage> {
     const usage = new Map<BrowserStorageCategory, number>()
     const add = (category: BrowserStorageCategory, bytes: number) => {
         usage.set(category, (usage.get(category) ?? 0) + bytes)
     }
+    let incomplete = false
 
     if (typeof indexedDB !== 'undefined') {
         for (const name of await listIndexedDBNames()) {
-            await measureIndexedDB(name, add)
+            if (!(await measureIndexedDB(name, add))) {
+                incomplete = true
+            }
         }
     }
-    await measureOPFS(add)
-    await measureCacheStorage(add)
+    if (!(await measureOPFS(add))) {
+        incomplete = true
+    }
+    if (!(await measureCacheStorage(add))) {
+        incomplete = true
+    }
 
-    return Array.from(usage, ([category, bytes]) => ({ bytes, category }))
+    const entries = Array.from(usage, ([category, bytes]) => ({ bytes, category }))
         .filter((entry) => entry.bytes > 0)
         .sort((a, b) => b.bytes - a.bytes)
+    return { entries, incomplete }
 }
